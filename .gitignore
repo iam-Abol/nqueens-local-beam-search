@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Data and figures generated during runs (can be selectively tracked or kept)
+# We track scripts and configs, while keeping large temporary files ignored if needed
+*.tmp
+*.log
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/
