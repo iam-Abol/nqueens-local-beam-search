@@ -144,3 +144,32 @@ def copy_state(
     """
     R, D_plus, D_minus = counts
     return list(q), (R.copy(), D_plus.copy(), D_minus.copy()), E
+
+
+def hamming_distance(q1: List[int], q2: List[int]) -> int:
+    """
+    Computes raw Hamming distance: number of columns where row assignments differ.
+    """
+    return sum(1 for a, b in zip(q1, q2) if a != b)
+
+
+def population_diversity(population: List[List[int]]) -> float:
+    """
+    Computes normalized population Hamming diversity D:
+      D = (2 / (k * (k - 1))) * sum_{i < j} (d_H(q_i, q_j) / N)
+    For k = 1, D = 0.0 by convention.
+    """
+    k = len(population)
+    if k <= 1:
+        return 0.0
+
+    n = len(population[0])
+    total_dist = 0.0
+    pairs = 0
+    for i in range(k):
+        for j in range(i + 1, k):
+            total_dist += hamming_distance(population[i], population[j]) / n
+            pairs += 1
+
+    return float(total_dist / pairs)
+

@@ -15,6 +15,8 @@ from src.board import (
     move_delta,
     apply_move_in_place,
     copy_state,
+    hamming_distance,
+    population_diversity,
 )
 
 
@@ -119,3 +121,26 @@ def test_immutability_and_state_isolation():
     child2_e = apply_move_in_place(child2_q, child2_counts, child2_e, 1, 1)
     assert child1_q[1] == 4
     assert child2_q[1] == 1
+
+
+def test_diversity_metrics():
+    """Test 4: Hamming distance and normalized diversity D."""
+    b1 = [0, 1, 2, 3]
+    b2 = [0, 1, 2, 3]
+    b3 = [3, 2, 1, 0]
+
+    assert hamming_distance(b1, b2) == 0
+    assert hamming_distance(b1, b3) == 4
+
+    # k = 1 edge case
+    assert population_diversity([b1]) == 0.0
+
+    # Two identical boards: D = 0.0
+    assert population_diversity([b1, b2]) == 0.0
+
+    # b1 and b3 differ in all 4 positions: D = 4/4 = 1.0
+    assert population_diversity([b1, b3]) == 1.0
+
+    # Three boards: (b1,b2)=0/4, (b1,b3)=4/4, (b2,b3)=4/4 -> avg = (0 + 1 + 1)/3 = 2/3
+    assert pytest.approx(population_diversity([b1, b2, b3]), 1e-6) == 2.0 / 3.0
+
