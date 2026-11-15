@@ -152,18 +152,21 @@ def deduplicate_candidates(candidates: List[CandidateMove]) -> List[CandidateMov
 def select_stochastic_order(
     candidates: List[CandidateMove],
     tau: float,
-    rng: np.random.Generator
+    rng: np.random.Generator,
+    num_to_select: Optional[int] = None
 ) -> List[CandidateMove]:
     """
-    Produces a full stochastic ordering of candidates sampled without replacement
+    Produces a stochastic ordering of candidates sampled without replacement
     using the Boltzmann distribution:
       Pr(q | U) ~ exp(-(E(q) - E_min) / tau)
     Recomputes E_min at each draw for numerical stability.
+    If num_to_select is specified, stops once that many items are drawn.
     """
     pool = list(candidates)
     ordered = []
+    limit = len(pool) if num_to_select is None else min(num_to_select, len(pool))
 
-    while pool:
+    while pool and len(ordered) < limit:
         energies = np.array([c.energy for c in pool], dtype=np.float64)
         e_min = np.min(energies)
         # Shift and scale by temperature tau
@@ -499,9 +502,8 @@ def _run_beam(
             selected_cands = [item[0] for item in paired[:k]]
 
         elif policy == "D":
-            # Stochastic Boltzmann selection
-            stochastic_order = select_stochastic_order(unique_cands, tau, select_rng)
-            selected_cands = stochastic_order[:k]
+            # Stochastic Boltzmann selection: only need to draw k items
+            selected_cands = select_stochastic_order(unique_cands, tau, select_rng, num_to_select=k)
 
         elif policy == "E":
             # Diversity-Aware Beam: weighted random order + Hamming filter
