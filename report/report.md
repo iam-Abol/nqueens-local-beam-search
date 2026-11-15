@@ -11,9 +11,9 @@
 In heuristic and local search, maintaining multiple candidate solutions is a classic paradigm for escaping local minima and exploring parallel regions of a search space. This investigation addresses the central question posed by the assignment:
 > *Under a fixed evaluation budget, does maintaining several candidate states ($k$ boards) and sharing information between them increase the probability of finding a conflict-free board? When does cooperation help, and when does it destroy useful diversity?*
 
-We evaluate five local search paradigms on the $N$-Queens problem across board sizes $N \in \{8, 32, 100\}$, beam widths $k \in \{1, 2, 4, 8, 16\}$, and budgets $B \in \{2\times 10^3, 2\times 10^4, 10^5\}$ across 75 independent, matched pseudo-random evaluation seeds:
-1. **Method A (One-State Local Search):** Tracks a single board ($k=1$), taking the lowest-energy neighbor from $m$ sampled moves (best-neighbor walk).
-2. **Method B (Independent Multi-Start):** Tracks $k$ independent trajectories with zero communication, each receiving an equal partition of the evaluation budget ($B/k$).
+We evaluate five local search paradigms on the $N$-Queens problem across board sizes $N \in \{8, 32, 100\}$, beam widths $k \in \{1, 2, 4, 8, 16\}$, and budgets $B \in \{2 \times 10^3, 2 \times 10^4, 10^5\}$ across 75 independent, matched pseudo-random evaluation seeds:
+1. **Method A (One-State Local Search):** Tracks a single board ($k = 1$), taking the lowest-energy neighbor from $m$ sampled moves (best-neighbor walk).
+2. **Method B (Independent Multi-Start):** Tracks $k$ independent trajectories with zero communication, each receiving an equal partition of the evaluation budget ($B / k$).
 3. **Method C (Greedy Local Beam Search):** Expands all $k$ states, pools all $k \times m$ candidate moves, deduplicates exact boards, and greedily selects the globally best $k$ states.
 4. **Method D (Stochastic Local Beam Search):** Pools and deduplicates successors, drawing $k$ states without replacement via a Boltzmann distribution with calibrated temperature $\tau = 0.5$.
 5. **Method E (Diversity-Aware Beam Search):** Enhances Method D with a normalized Hamming distance rejection threshold $d_{\min} = 0.10$ to prevent clone takeover.
@@ -22,28 +22,28 @@ We evaluate five local search paradigms on the $N$-Queens problem across board s
 ---
 
 ### 1.2 State Representation & Incremental $O(1)$ Energy Delta
-A chessboard configuration is represented as a permutation vector $q = (q[0], q[1], \dots, q[N-1])$, where $q[c] \in \{0, \dots, N-1\}$ specifies the row of the queen in column $c$. By construction, each column contains exactly one queen.
+A chessboard configuration is represented as a permutation vector $q = (q_0, q_1, \dots, q_{N-1})$, where $q_c \in \{0, 1, \dots, N-1\}$ specifies the row of the queen in column $c$. By construction, each column contains exactly one queen.
 
 The objective (energy) function $E(q)$ counts the number of mutually attacking pairs of queens:
-$$E(q) = \sum_{0 \le i < j < N} \mathbf{1}\big[q[i] = q[j] \;\lor\; |q[i] - q[j]| = |i - j|\big]$$
+$$\displaystyle E(q) = \sum_{0 \le i < j < N} \mathbf{1}\big[q_i = q_j \;\lor\; |q_i - q_j| = |i - j|\big]$$
 A verified configuration with $E(q) = 0$ achieves the global minimum.
 
 #### Incremental $O(1)$ Collision Accounting
-Recomputing $E(q)$ from scratch requires pairwise comparison over $\binom{N}{2}$ queen pairs ($O(N^2)$). In our implementation, each state maintains three integer collision count arrays:
+Recomputing $E(q)$ from scratch requires pairwise comparison over all $\binom{N}{2}$ queen pairs ($O(N^2)$). In our implementation, each state maintains three integer collision count arrays:
 1. $R[r]$: Number of queens on row $r$ ($0 \le r < N$, size $N$).
 2. $D^+[d]$: Number of queens on anti-diagonal $d = r + c$ ($0 \le d \le 2N - 2$, size $2N - 1$).
 3. $D^-[d]$: Number of queens on main diagonal $d = r - c + N - 1$ ($0 \le d \le 2N - 2$, size $2N - 1$).
 
 The total energy is given by:
-$$E(q) = \sum_{r=0}^{N-1} \binom{R[r]}{2} + \sum_{d=0}^{2N-2} \binom{D^+[d]}{2} + \sum_{d=0}^{2N-2} \binom{D^-[d]}{2}$$
+$$\displaystyle E(q) = \sum_{r=0}^{N-1} \binom{R[r]}{2} + \sum_{d=0}^{2N-2} \binom{D^+[d]}{2} + \sum_{d=0}^{2N-2} \binom{D^-[d]}{2}$$
 
 When evaluating a proposed move in column $c$ from row $a$ to new row $r$:
 * **Conflicts removed by lifting queen from $(c, a)$:**
-  $$C_{\text{old}} = (R[a] - 1) + (D^+[a + c] - 1) + (D^-[a - c + N - 1] - 1)$$
+  $$\displaystyle C_{\mathrm{old}} = (R[a] - 1) + (D^+[a + c] - 1) + (D^-[a - c + N - 1] - 1)$$
 * **Conflicts created by placing queen at $(c, r)$:**
-  $$C_{\text{new}} = R[r] + D^+[r + c] + D^-[r - c + N - 1] - 3 \cdot \mathbf{1}[r = a]$$
+  $$\displaystyle C_{\mathrm{new}} = R[r] + D^+[r + c] + D^-[r - c + N - 1] - 3 \cdot \mathbf{1}[r = a]$$
 * **Exact energy delta:**
-  $$\Delta = C_{\text{old}} - C_{\text{new}}, \qquad E_{\text{child}} = E_{\text{parent}} - \Delta$$
+  $$\displaystyle \Delta = C_{\mathrm{old}} - C_{\mathrm{new}}, \qquad E_{\mathrm{child}} = E_{\mathrm{parent}} - \Delta$$
 
 This calculation requires strictly **$O(1)$ arithmetic operations** without copying board arrays. Unselected candidate moves are represented as lightweight tuples; full board arrays and count copies ($O(N)$) are materialized only for the $k$ winning candidates.
 
