@@ -284,10 +284,10 @@ def run_experiment_3(config: Dict[str, Any], verbose: bool = True):
                         "seed": seed,
                         "evals": res.trace["evals"][i],
                         "best_energy": res.trace["best_energy"][i],
-                        "diversity": res.trace["diversity"][i],
-                        "unique_states": res.trace["unique_states"][i],
-                        "distinct_ancestors": res.trace["distinct_ancestors"][i],
-                        "relaxed_selections": res.trace["relaxed_selections"][i] if "relaxed_selections" in res.trace and i < len(res.trace["relaxed_selections"]) else 0,
+                        "diversity": res.trace["diversity"][i] if "diversity" in res.trace and i < len(res.trace["diversity"]) else (res.trace["diversity"][-1] if res.trace.get("diversity") else 0.0),
+                        "unique_states": res.trace["unique_states"][i] if "unique_states" in res.trace and i < len(res.trace["unique_states"]) else (res.trace["unique_states"][-1] if res.trace.get("unique_states") else 1),
+                        "distinct_ancestors": res.trace["distinct_ancestors"][i] if "distinct_ancestors" in res.trace and i < len(res.trace["distinct_ancestors"]) else (res.trace["distinct_ancestors"][-1] if res.trace.get("distinct_ancestors") else 1),
+                        "relaxed_selections": res.trace["relaxed_selections"][i] if "relaxed_selections" in res.trace and i < len(res.trace["relaxed_selections"]) else (res.trace["relaxed_selections"][-1] if res.trace.get("relaxed_selections") else 0),
                     })
 
         elapsed = time.perf_counter() - t_start
