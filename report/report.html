@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>N-Queens Report</title>
+<style>
+  @page {
+    size: letter;
+    margin: 0.8cm 1.0cm;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #24292e;
+    line-height: 1.30;
+    font-size: 8.0pt;
+    margin: 0;
+    padding: 0;
+  }
+  h1 {
+    font-size: 14pt;
+    border-bottom: 1px solid #eaecef;
+    padding-bottom: 2px;
+    margin-top: 0;
+    margin-bottom: 3px;
+    color: #1a1e22;
+  }
+  h2 {
+    font-size: 10.5pt;
+    border-bottom: 1px solid #eaecef;
+    padding-bottom: 1px;
+    margin-top: 7px;
+    margin-bottom: 3px;
+    color: #1a1e22;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 9pt;
+    margin-top: 6px;
+    margin-bottom: 2px;
+    color: #24292e;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 8.5pt;
+    margin-top: 5px;
+    margin-bottom: 2px;
+    page-break-after: avoid;
+  }
+  p, ul, ol {
+    margin-top: 2px;
+    margin-bottom: 3px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 4px 0;
+    font-size: 6.5pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #dfe2e5;
+    padding: 2px 3px;
+    text-align: left;
+  }
+  th {
+    background-color: #f6f8fa;
+    font-weight: 600;
+  }
+  tr:nth-child(even) {
+    background-color: #fcfcfc;
+  }
+  img {
+    max-width: 80%;
+    max-height: 150px;
+    display: block;
+    margin: 3px auto;
+    border: 1px solid #eaecef;
+    border-radius: 3px;
+    page-break-inside: avoid;
+  }
+  code {
+    background-color: rgba(27,31,35,0.05);
+    border-radius: 2px;
+    font-family: monospace;
+    font-size: 80%;
+    padding: 1px 2px;
+  }
+  hr {
+    border: 0;
+    height: 1px;
+    background: #e1e4e8;
+    margin: 5px 0;
+  }
+</style>
+</head>
+<body>
+<h1>Local Beam Search, Diversity, and Information Sharing in N-Queens</h1>
+<p><strong>An Empirical and Theoretical Investigation</strong></p>
+<p><strong>GitHub Repository:</strong> <a href="https://github.com/iam-Abol/nqueens-local-beam-search">https://github.com/iam-Abol/nqueens-local-beam-search</a></p>
+<hr />
+<h2>1. Executive Summary &amp; Problem Formulation</h2>
+<h3>1.1 Central Investigation</h3>
+<p>In heuristic and local search, maintaining multiple candidate solutions is a classic paradigm for escaping local minima and exploring parallel regions of a search space. This investigation addresses the central question posed by the assignment:</p>
+<blockquote>
+<p><em>Under a fixed evaluation budget, does maintaining several candidate states ($k$ boards) and sharing information between them increase the probability of finding a conflict-free board? When does cooperation help, and when does it destroy useful diversity?</em></p>
+</blockquote>
+<p>We evaluate five local search paradigms on the $N$-Queens problem across board sizes $N \in {8, 32, 100}$, beam widths $k \in {1, 2, 4, 8, 16}$, and budgets $B \in {2\times 10^3, 2\times 10^4, 10^5}$ across 75 independent, matched pseudo-random evaluation seeds:
+1. <strong>Method A (One-State Local Search):</strong> Tracks a single board ($k=1$), taking the lowest-energy neighbor from $m$ sampled moves (best-neighbor walk).
+2. <strong>Method B (Independent Multi-Start):</strong> Tracks $k$ independent trajectories with zero communication, each receiving an equal partition of the evaluation budget ($B/k$).
+3. <strong>Method C (Greedy Local Beam Search):</strong> Expands all $k$ states, pools all $k \times m$ candidate moves, deduplicates exact boards, and greedily selects the globally best $k$ states.
+4. <strong>Method D (Stochastic Local Beam Search):</strong> Pools and deduplicates successors, drawing $k$ states without replacement via a Boltzmann distribution with calibrated temperature $\tau = 0.5$.
+5. <strong>Method E (Diversity-Aware Beam Search):</strong> Enhances Method D with a normalized Hamming distance rejection threshold $d_{\min} = 0.10$ to prevent clone takeover.
+6. <strong>Baseline (Random-Restart Strict Hill Climbing):</strong> Tracks a single state with strict uphill rejection ($\Delta &gt; 0$ only), triggering a random restart after 10 consecutive stagnant steps.</p>
+<hr />
+<h3>1.2 State Representation &amp; Incremental $O(1)$ Energy Delta</h3>
+<p>A chessboard configuration is represented as a permutation vector $q = (q[0], q[1], \dots, q[N-1])$, where $q[c] \in {0, \dots, N-1}$ specifies the row of the queen in column $c$. By construction, each column contains exactly one queen.</p>
+<p>The objective (energy) function $E(q)$ counts the number of mutually attacking pairs of queens:
+$$E(q) = \sum_{0 \le i &lt; j &lt; N} \mathbf{1}\big[q[i] = q[j] \;\lor\; |q[i] - q[j]| = |i - j|\big]$$
+A verified configuration with $E(q) = 0$ achieves the global minimum.</p>
+<h4>Incremental $O(1)$ Collision Accounting</h4>
+<p>Recomputing $E(q)$ from scratch requires pairwise comparison over $\binom{N}{2}$ queen pairs ($O(N^2)$). In our implementation, each state maintains three integer collision count arrays:
+1. $R[r]$: Number of queens on row $r$ ($0 \le r &lt; N$, size $N$).
+2. $D^+[d]$: Number of queens on anti-diagonal $d = r + c$ ($0 \le d \le 2N - 2$, size $2N - 1$).
+3. $D^-[d]$: Number of queens on main diagonal $d = r - c + N - 1$ ($0 \le d \le 2N - 2$, size $2N - 1$).</p>
+<p>The total energy is given by:
+$$E(q) = \sum_{r=0}^{N-1} \binom{R[r]}{2} + \sum_{d=0}^{2N-2} \binom{D^+[d]}{2} + \sum_{d=0}^{2N-2} \binom{D^-[d]}{2}$$</p>
+<p>When evaluating a proposed move in column $c$ from row $a$ to new row $r$:
+* <strong>Conflicts removed by lifting queen from $(c, a)$:</strong>
+  $$C_{\text{old}} = (R[a] - 1) + (D^+[a + c] - 1) + (D^-[a - c + N - 1] - 1)$$
+* <strong>Conflicts created by placing queen at $(c, r)$:</strong>
+  $$C_{\text{new}} = R[r] + D^+[r + c] + D^-[r - c + N - 1] - 3 \cdot \mathbf{1}[r = a]$$
+* <strong>Exact energy delta:</strong>
+  $$\Delta = C_{\text{old}} - C_{\text{new}}, \qquad E_{\text{child}} = E_{\text{parent}} - \Delta$$</p>
+<p>This calculation requires strictly <strong>$O(1)$ arithmetic operations</strong> without copying board arrays. Unselected candidate moves are represented as lightweight tuples; full board arrays and count copies ($O(N)$) are materialized only for the $k$ winning candidates.</p>
+<hr />
+<h2>2. Experimental Methodology &amp; Calibration</h2>
+<h3>2.1 Pilot Study &amp; Parameter Freezing</h3>
+<p>To prevent test-set bias (p-hacking), five dedicated pilot seeds (<code>1001</code>–<code>1005</code>) were evaluated and permanently frozen prior to benchmark execution:
+* <strong>Temperature Calibration ($\tau$):</strong> We tested $\tau \in {0.5, 1.0, 2.0, 5.0}$ on $N=32, k=4, B=10,000$. Higher temperatures injected excessive noise (mean final energy for $\tau=5.0$ was $13.2$), whereas $\tau = 0.5$ preserved low-energy bias while enabling non-greedy exploration (mean energy $2.2$). We froze $\tau = 0.5$.
+* <strong>Budget Calibration ($B$):</strong> The handout's starting grid ${10^3, 10^4, 10^5}$ was calibrated to prevent saturation ($100\%$ success in 10 steps) or total failure ($0\%$ everywhere):
+  * $N = 8 \implies B = 2,000$ (separates beam search from single-state).
+  * $N = 32 \implies B = 20,000$ (captures the phase transition where beam search breaks through plateaus).
+  * $N = 100 \implies B = 100,000$ (allows deep exploration in sub-second runtime).
+* <strong>Evaluation Seeds:</strong> 75 independent pseudo-random seeds (<code>2001</code>–<code>2075</code>) were generated via <code>np.random.SeedSequence</code> and isolated from the pilot seeds.</p>
+<h3>2.2 Successor Sampling &amp; Budget Accounting</h3>
+<ul>
+<li><strong>Neighborhood size $m$:</strong> For $N = 8$, all $N(N-1) = 56$ moves are evaluated. For $N &gt; 8$, $m = \min(2N, N(N-1))$ distinct moves are sampled uniformly without replacement via an exact flat-index bijection.</li>
+<li><strong>Accounting:</strong> Initial scoring of a new board costs 1 evaluation; each proposed child scored via <code>move_delta</code> costs 1 evaluation. Read-only checks and validation consume zero budget units. Terminal partial generations are allocated round-robin across parents, rotating the starting parent index each generation.</li>
+</ul>
+<hr />
+<h2>3. Empirical Results &amp; Analysis</h2>
+<h3>3.1 Primary Performance Summary Table</h3>
+<p>Below is the complete benchmark results table across all configurations evaluated on 75 matched seeds:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Exp</th>
+<th style="text-align: center;">$N$</th>
+<th style="text-align: left;">Method</th>
+<th style="text-align: center;">$k$</th>
+<th style="text-align: center;">Budget $B$</th>
+<th style="text-align: center;">Trials</th>
+<th style="text-align: center;">Success Rate</th>
+<th style="text-align: center;">95% Wilson CI</th>
+<th style="text-align: center;">Mean Best Energy</th>
+<th style="text-align: center;">Median Evals to Sol</th>
+<th style="text-align: center;">Paired W-L-T vs. Method A</th>
+<th style="text-align: center;">Runtime (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Exp 1</strong></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method A</td>
+<td style="text-align: center;">1</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">70.7%</td>
+<td style="text-align: center;">[59.6%, 79.8%]</td>
+<td style="text-align: center;">0.29</td>
+<td style="text-align: center;">504</td>
+<td style="text-align: center;">Baseline</td>
+<td style="text-align: center;">0.004</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">84.0%</td>
+<td style="text-align: center;">[74.1%, 90.6%]</td>
+<td style="text-align: center;">0.16</td>
+<td style="text-align: center;">575</td>
+<td style="text-align: center;">35W - 35L - 5T</td>
+<td style="text-align: center;">0.003</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">84.0%</td>
+<td style="text-align: center;">[74.1%, 90.6%]</td>
+<td style="text-align: center;">0.16</td>
+<td style="text-align: center;">944</td>
+<td style="text-align: center;">26W - 44L - 5T</td>
+<td style="text-align: center;">0.003</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">76.0%</td>
+<td style="text-align: center;">[65.2%, 84.2%]</td>
+<td style="text-align: center;">0.24</td>
+<td style="text-align: center;">1,513</td>
+<td style="text-align: center;">19W - 50L - 6T</td>
+<td style="text-align: center;">0.005</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">17.3%</td>
+<td style="text-align: center;">[10.4%, 27.4%]</td>
+<td style="text-align: center;">0.88</td>
+<td style="text-align: center;">1,588</td>
+<td style="text-align: center;">5W - 52L - 18T</td>
+<td style="text-align: center;">0.006</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">82.7%</td>
+<td style="text-align: center;">[72.6%, 89.6%]</td>
+<td style="text-align: center;">0.17</td>
+<td style="text-align: center;">584</td>
+<td style="text-align: center;">33W - 38L - 4T</td>
+<td style="text-align: center;">0.003</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;"><strong>85.3%</strong></td>
+<td style="text-align: center;"><strong>[75.6%, 91.6%]</strong></td>
+<td style="text-align: center;"><strong>0.15</strong></td>
+<td style="text-align: center;">1,008</td>
+<td style="text-align: center;">28W - 44L - 3T</td>
+<td style="text-align: center;">0.004</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">72.0%</td>
+<td style="text-align: center;">[61.0%, 80.9%]</td>
+<td style="text-align: center;">0.28</td>
+<td style="text-align: center;">1,428</td>
+<td style="text-align: center;">16W - 52L - 7T</td>
+<td style="text-align: center;">0.005</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">33.3%</td>
+<td style="text-align: center;">[23.7%, 44.6%]</td>
+<td style="text-align: center;">0.67</td>
+<td style="text-align: center;">1,875</td>
+<td style="text-align: center;">8W - 52L - 15T</td>
+<td style="text-align: center;">0.007</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">73.3%</td>
+<td style="text-align: center;">[62.4%, 82.0%]</td>
+<td style="text-align: center;">0.27</td>
+<td style="text-align: center;">977</td>
+<td style="text-align: center;">22W - 45L - 8T</td>
+<td style="text-align: center;">0.005</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">65.3%</td>
+<td style="text-align: center;">[54.1%, 75.1%]</td>
+<td style="text-align: center;">0.35</td>
+<td style="text-align: center;">1,096</td>
+<td style="text-align: center;">24W - 46L - 5T</td>
+<td style="text-align: center;">0.006</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">48.0%</td>
+<td style="text-align: center;">[37.1%, 59.1%]</td>
+<td style="text-align: center;">0.52</td>
+<td style="text-align: center;">1,524</td>
+<td style="text-align: center;">15W - 52L - 8T</td>
+<td style="text-align: center;">0.007</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">8</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">2,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">25.3%</td>
+<td style="text-align: center;">[16.9%, 36.2%]</td>
+<td style="text-align: center;">0.81</td>
+<td style="text-align: center;">1,851</td>
+<td style="text-align: center;">6W - 56L - 13T</td>
+<td style="text-align: center;">0.010</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 1</strong></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method A</td>
+<td style="text-align: center;">1</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">8.0%</td>
+<td style="text-align: center;">[3.7%, 16.4%]</td>
+<td style="text-align: center;">1.00</td>
+<td style="text-align: center;">8,828</td>
+<td style="text-align: center;">Baseline</td>
+<td style="text-align: center;">0.094</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">14.7%</td>
+<td style="text-align: center;">[8.4%, 24.4%]</td>
+<td style="text-align: center;">0.96</td>
+<td style="text-align: center;">10,747</td>
+<td style="text-align: center;">17W - 14L - 44T</td>
+<td style="text-align: center;">0.082</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">9.3%</td>
+<td style="text-align: center;">[4.6%, 18.0%]</td>
+<td style="text-align: center;">1.07</td>
+<td style="text-align: center;">16,213</td>
+<td style="text-align: center;">11W - 16L - 48T</td>
+<td style="text-align: center;">0.083</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">2.7%</td>
+<td style="text-align: center;">[0.7%, 9.2%]</td>
+<td style="text-align: center;">1.57</td>
+<td style="text-align: center;">13,320</td>
+<td style="text-align: center;">5W - 43L - 27T</td>
+<td style="text-align: center;">0.085</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">3.25</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 75L - 0T</td>
+<td style="text-align: center;">0.088</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">25.3%</td>
+<td style="text-align: center;">[16.9%, 36.2%]</td>
+<td style="text-align: center;">0.76</td>
+<td style="text-align: center;">10,157</td>
+<td style="text-align: center;">21W - 7L - 47T</td>
+<td style="text-align: center;">0.086</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;"><strong>34.7%</strong></td>
+<td style="text-align: center;"><strong>[24.9%, 45.9%]</strong></td>
+<td style="text-align: center;"><strong>0.65</strong></td>
+<td style="text-align: center;">12,881</td>
+<td style="text-align: center;"><strong>27W - 5L - 43T ($p &lt; 10^{-4}$)</strong></td>
+<td style="text-align: center;">0.084</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">13.3%</td>
+<td style="text-align: center;">[7.4%, 22.8%]</td>
+<td style="text-align: center;">0.89</td>
+<td style="text-align: center;">13,478</td>
+<td style="text-align: center;">15W - 8L - 52T</td>
+<td style="text-align: center;">0.093</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">1.77</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">1W - 48L - 26T</td>
+<td style="text-align: center;">0.105</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">1.60</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">4W - 42L - 29T</td>
+<td style="text-align: center;">0.105</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">12.0%</td>
+<td style="text-align: center;">[6.4%, 21.3%]</td>
+<td style="text-align: center;">1.20</td>
+<td style="text-align: center;">15,893</td>
+<td style="text-align: center;">9W - 26L - 40T</td>
+<td style="text-align: center;">0.104</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">4.0%</td>
+<td style="text-align: center;">[1.4%, 11.1%]</td>
+<td style="text-align: center;">1.31</td>
+<td style="text-align: center;">16,042</td>
+<td style="text-align: center;">7W - 31L - 37T</td>
+<td style="text-align: center;">0.109</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">1.3%</td>
+<td style="text-align: center;">[0.2%, 7.2%]</td>
+<td style="text-align: center;">2.31</td>
+<td style="text-align: center;">18,467</td>
+<td style="text-align: center;">1W - 66L - 8T</td>
+<td style="text-align: center;">0.122</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 1</strong></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method A</td>
+<td style="text-align: center;">1</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">1.93</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">Baseline</td>
+<td style="text-align: center;">0.787</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">2.17</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">11W - 27L - 37T</td>
+<td style="text-align: center;">0.726</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">2.80</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">8W - 53L - 14T</td>
+<td style="text-align: center;">0.725</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">7.80</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 75L - 0T</td>
+<td style="text-align: center;">0.721</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method B</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">23.79</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 75L - 0T</td>
+<td style="text-align: center;">0.719</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">1.53</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">30W - 4L - 41T</td>
+<td style="text-align: center;">0.780</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;"><strong>5.3%</strong></td>
+<td style="text-align: center;"><strong>[2.1%, 12.9%]</strong></td>
+<td style="text-align: center;"><strong>1.24</strong></td>
+<td style="text-align: center;">80,434</td>
+<td style="text-align: center;"><strong>48W - 5L - 22T ($p &lt; 10^{-8}$)</strong></td>
+<td style="text-align: center;">0.775</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">3.23</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">3W - 59L - 13T</td>
+<td style="text-align: center;">0.805</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">17.48</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 75L - 0T</td>
+<td style="text-align: center;">0.822</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">100</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">100,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">0.0%</td>
+<td style="text-align: center;">[0.0%, 4.9%]</td>
+<td style="text-align: center;">4.55</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 74L - 1T</td>
+<td style="text-align: center;">0.773</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 3</strong></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method C</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">13.3%</td>
+<td style="text-align: center;">[7.4%, 22.8%]</td>
+<td style="text-align: center;">0.89</td>
+<td style="text-align: center;">13,478</td>
+<td style="text-align: center;">15W - 8L - 52T</td>
+<td style="text-align: center;">0.093</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method D</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">4.0%</td>
+<td style="text-align: center;">[1.4%, 11.1%]</td>
+<td style="text-align: center;">1.31</td>
+<td style="text-align: center;">16,042</td>
+<td style="text-align: center;">7W - 31L - 37T</td>
+<td style="text-align: center;">0.109</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Method E</td>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;"><strong>0.0%</strong></td>
+<td style="text-align: center;"><strong>[0.0%, 4.9%]</strong></td>
+<td style="text-align: center;"><strong>1.96</strong></td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">0W - 70L - 5T</td>
+<td style="text-align: center;">1.068</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 4</strong></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;">Baseline_RHC</td>
+<td style="text-align: center;">1</td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;">1.3%</td>
+<td style="text-align: center;">[0.2%, 7.2%]</td>
+<td style="text-align: center;">2.16</td>
+<td style="text-align: center;">N/A</td>
+<td style="text-align: center;">1W - 6L - 68T</td>
+<td style="text-align: center;">0.032</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: center;">32</td>
+<td style="text-align: left;"><strong>Method C</strong></td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td style="text-align: center;">20,000</td>
+<td style="text-align: center;">75</td>
+<td style="text-align: center;"><strong>34.7%</strong></td>
+<td style="text-align: center;"><strong>[24.9%, 45.9%]</strong></td>
+<td style="text-align: center;"><strong>0.65</strong></td>
+<td style="text-align: center;">12,881</td>
+<td style="text-align: center;"><strong>27W - 5L - 43T</strong></td>
+<td style="text-align: center;">0.084</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3>3.2 Key Experimental Findings</h3>
+<h4>Figure 1: Success vs. Beam Width $k$ (The Inverted-U Phenomenon)</h4>
+<p><img alt="Figure 1: Success Rate vs. Beam Width k" src="/home/zaya/university/هوش/assignments/1/figures/fig1_success_vs_k.png" /></p>
+<p>Figure 1 illustrates the critical trade-off between search breadth and search depth under a fixed evaluation budget $B$:
+* For all board sizes, performance exhibits an <strong>inverted U-curve</strong> peaking at $k = 4$.
+* On $N = 32$, Greedy Beam (C) with $k=4$ attains a <strong>$34.7\%$ success rate</strong>, compared to just $8.0\%$ for single-state search (A) and $9.3\%$ for multi-start (B).
+* As width expands to $k = 16$, performance plummets to $0.0\%$ on $N=32$ and $N=100$. Because the budget $B$ is fixed, dividing evaluations across 16 states restricts each trajectory to a shallow depth of only $B/(km)$ generations, terminating before states can traverse neutral plateaus to zero conflicts.</p>
+<h4>Figure 2: Solved Fraction vs. Cumulative Evaluations</h4>
+<p><img alt="Figure 2: Solved Fraction vs. Evaluations" src="/home/zaya/university/هوش/assignments/1/figures/fig2_solved_fraction_vs_evals.png" /></p>
+<p>Figure 2 depicts cumulative empirical CDF curves of solution times:
+* On $N = 8$, Method C ($k=4$) and Method B ($k=4$) rise rapidly within the first 1,000 evaluations, plateauing near $85\%$.
+* On $N = 32$, Method C ($k=4$) begins finding solutions around 6,000 evaluations and maintains a steady upward trajectory throughout the $20,000$ budget, whereas Method A flattens prematurely after 10,000 evaluations due to entrapment in local plateaus.</p>
+<h4>Figure 3: Best-So-Far Energy Trajectories</h4>
+<p><img alt="Figure 3: Best-So-Far Energy vs. Evaluations" src="/home/zaya/university/هوش/assignments/1/figures/fig3_energy_vs_evals.png" /></p>
+<p>Figure 3 displays the median energy curves with interquartile bands ($25^{\text{th}}$–$75^{\text{th}}$ percentiles):
+* On $N = 100$, all methods descend rapidly from random initialization ($\sim 50$ conflicts) to $&lt; 10$ conflicts within the first 10,000 evaluations.
+* Beyond 20,000 evaluations, Method A and Method B stall at a median of 2 to 3 conflicts.
+* In contrast, Method C ($k=4$) continues incremental progress, reaching a median of 1 conflict and discovering <strong>4 verified zero-conflict solutions ($E=0$)</strong> at evaluation counts between 65,000 and 95,000.</p>
+<h4>Figure 4: Diversity Collapse &amp; The Failure of Method E</h4>
+<p><img alt="Figure 4: Population Diversity D vs. Evaluations" src="/home/zaya/university/هوش/assignments/1/figures/fig4_diversity_vs_evals.png" /></p>
+<p>Figure 4 diagnoses population dynamics for Methods C, D, and E on $N = 32, k = 8$:
+* <strong>Greedy Beam (C):</strong> Surviving initial ancestors collapse from 8 to 1 within the first 1,500 evaluations. The population becomes a set of 1-move sibling clones (Hamming diversity $D \approx 0.05$).
+* <strong>Stochastic Beam (D):</strong> Softens collapse slightly, but still drops to 1–2 surviving ancestors by 5,000 evaluations.
+* <strong>Diversity-Aware Beam (E):</strong> Successfully enforces spatial spread, maintaining high normalized Hamming diversity ($D \approx 0.65$) and 3–5 surviving ancestors throughout the search.
+* <strong>The Critical Empirical Result:</strong> Despite maintaining diversity, <strong>Method E achieved 0% success</strong> (versus $13.3\%$ for Method C). By enforcing a mandatory 10% Hamming distance separation, Method E systematically discarded high-quality candidate boards residing in the same basin of attraction as the lead state, forcing the beam to allocate evaluations to distant, low-quality configurations. Diversity for the sake of diversity actively harmed solution discovery.</p>
+<hr />
+<h2>4. Solutions to Exercises A, B, and C</h2>
+<h3>Exercise A: Independent Opportunities &amp; Budget Partitioning</h3>
+<p>Let $p(b)$ be the probability that a single randomized trajectory finds a solution within budget $b$. If $k$ trajectories run independently with budget $b$ each:
+$$\Pr(\text{trajectory } i \text{ fails}) = 1 - p(b)$$
+Since all $k$ trajectories are mutually independent random experiments:
+$$\Pr(\text{all } k \text{ fail}) = [1 - p(b)]^k$$
+$$\Pr(\text{at least one succeeds}) = 1 - [1 - p(b)]^k$$</p>
+<p>For $p(b) = 0.20$:
+* $k = 1: 1 - (1 - 0.20)^1 = 0.2000$ (20.0%)
+* $k = 2: 1 - (0.80)^2 = 0.3600$ (36.0%)
+* $k = 4: 1 - (0.80)^4 = 0.5904$ (59.0%)
+* $k = 8: 1 - (0.80)^8 = 0.8322$ (83.2%)</p>
+<p><strong>Assumptions &amp; Total Work Allowance:</strong>
+1. Trajectories must be statistically independent (disjoint random seeds and independent initial states).
+2. The search environments are identical and non-interacting.
+3. This formula represents an <strong>extra-total-work experiment</strong>: each trajectory receives budget $b$, so total work is $k \times b$.</p>
+<p><strong>Under a Fixed Total Budget $B$:</strong>
+Each trajectory receives only $b = \lfloor B/k \rfloor$ evaluations. The comparison is:
+$$1 - \Big[1 - p\big(\lfloor B/k \rfloor\big)\Big]^k \quad \text{versus} \quad p(B)$$
+If the single-run success function $p(b)$ exhibits a threshold/phase-transition property (where $p(b) \approx 0$ for small $b$ and rises sharply only after substantial search depth), then $p(\lfloor B/k \rfloor)$ can be zero, causing the multi-start success probability to collapse to zero even though $p(B) &gt; 0$. Our Experiment 1 data on $N=32$ directly confirms this: Method B drops from $14.7\%$ at $k=2$ ($b=10,000$) to $0.0\%$ at $k=16$ ($b=1,250$).</p>
+<hr />
+<h3>Exercise B: A Greedy Beam Loses the Useful Route</h3>
+<p>Given initial population ${A, B}$:
+* Parent $A$ produces children $A_1 (E=1)$ and $A_2 (E=1)$, leading to dead-end positive energy.
+* Parent $B$ produces children $B_1 (E=2)$ and $B_2 (E=3)$. Child $B_1$ has a goal successor $G (E=0)$.</p>
+<ol>
+<li><strong>Independent Multi-Start:</strong></li>
+<li>Trajectory 1 selects from ${A_1, A_2} \implies$ picks $A_1$ (or $A_2$).</li>
+<li>Trajectory 2 selects from ${B_1, B_2} \implies$ picks $B_1$ ($E=2$).</li>
+<li>In the next generation, Trajectory 2 expands $B_1$ and <strong>reaches goal $G$ ($E=0$)</strong>.</li>
+<li><strong>Greedy Local Beam ($k=2$):</strong></li>
+<li>Pooled candidates: ${A_1 (1), A_2 (1), B_1 (2), B_2 (3)}$.</li>
+<li>The two lowest-energy states globally are ${A_1, A_2}$.</li>
+<li>Candidate $B_1$ is discarded.</li>
+<li>Both survivors belong to lineage $A$. The search enters the closed positive-energy trap and <strong>fails to reach $G$</strong>.</li>
+<li><strong>Stochastic Selection:</strong></li>
+<li>At temperature $\tau &gt; 0$, candidate $B_1$ receives probability $P(B_1) \propto \exp(-(2 - 1)/\tau) = \exp(-1/\tau) &gt; 0$.</li>
+<li>$B_1$ has a non-zero probability of being selected, but survival is not guaranteed.</li>
+<li><strong>Required Diversity Measure:</strong></li>
+<li>A naive diversity metric that only checks coordinate differences would see $A_1 \neq A_2$ and falsely declare the population "diverse".</li>
+<li>A meaningful diversity metric must recognize <strong>ancestral lineage</strong> or basin of attraction: it must track that ${A_1, A_2}$ share $100\%$ common ancestry and explore a single basin.</li>
+</ol>
+<hr />
+<h3>Exercise C: A Real Plateau on $N = 4$</h3>
+<p>Consider state $q = [0, 1, 3, 2]$ for $N = 4$.
+* <strong>Energy Calculation:</strong>
+  * Queen pairs: $(0, 1)$ on row 0 and 1; cols 0, 1: $|0 - 1| = 1 = |0 - 1| \implies$ attack (main diagonal).
+  * Pair $(2, 3)$ on row 3 and 2; cols 2, 3: $|3 - 2| = 1 = |2 - 3| \implies$ attack (anti-diagonal).
+  * All other 4 pairs are non-attacking.
+  * Total conflicts: $E(q) = 2$.
+* <strong>All 12 One-Move Neighbors:</strong>
+  * Column 0 moves: $q \to [1, 1, 3, 2] \implies E=2$; $q \to [2, 1, 3, 2] \implies E=3$; $q \to [3, 1, 3, 2] \implies E=2$.
+  * Column 1 moves: $q \to [0, 0, 3, 2] \implies E=2$; $q \to [0, 2, 3, 2] \implies E=3$; $q \to [0, 3, 3, 2] \implies E=2$.
+  * Column 2 moves: $q \to [0, 1, 0, 2] \implies E=2$; $q \to [0, 1, 1, 2] \implies E=3$; $q \to [0, 1, 2, 2] \implies E=2$.
+  * Column 3 moves: $q \to [0, 1, 3, 0] \implies E=2$; $q \to [0, 1, 3, 1] \implies E=3$; $q \to [0, 1, 3, 3] \implies E=2$.
+* <strong>Classification:</strong>
+  * 8 neighbors have $E = 2$ ($\Delta = 0$); 4 neighbors have $E = 3$ ($\Delta = -1$).
+  * Zero neighbors have $E &lt; 2$.
+  * This is a <strong>non-strict local minimum (a flat plateau)</strong>. It is not a strict local minimum (because equal-energy neighbors exist), and not a global minimum (since $E=0$ solutions exist for $N=4$, e.g., $[1, 3, 0, 2]$).
+* <strong>Policy Difference:</strong>
+  * <strong>Strict Hill Climbing:</strong> Demands $\Delta &gt; 0$. Seeing only $\Delta \le 0$, it terminates immediately or stagnates.
+  * <strong>Successor-Only Best-Neighbor Policy (Method A):</strong> Evaluates all neighbors and randomly transitions across equal-energy states ($\Delta = 0$), traversing the plateau to escape toward a global optimum.</p>
+<hr />
+<h2>5. Answers to Written Questions Q1–Q9</h2>
+<h3>Q1. Parallel Workers vs. Beam Width</h3>
+<ul>
+<li><strong>Difference:</strong> Distributing one board across 8 CPU workers divides the evaluation of the $N(N-1)$ moves of a <strong>single state</strong>. The search space trajectory remains strictly sequential ($k=1$), following a single path. In contrast, a width-8 beam search retains <strong>8 distinct board configurations</strong> simultaneously, exploring 8 different search trajectories.</li>
+<li><strong>Single Core Execution:</strong> Width-8 beam search can run sequentially on a single CPU core. In our implementation, a single process maintains the population of $k=8$ states, evaluating candidate moves in sequential batches without multiprocessing overhead.</li>
+</ul>
+<h3>Q2. Pooling Children in Beam Search vs. Multi-Start</h3>
+<ul>
+<li><strong>Mechanics:</strong> In Independent Multi-Start (B), each trajectory selects only from its own proposed children. In Greedy Beam Search (C), children from all $k$ parents are merged into a unified candidate pool.</li>
+<li><strong>When Pooling Helps:</strong> When one parent discovers an exceptionally promising descent direction, pooling allows the beam to allocate multiple winning slots to that parent's descendants, focusing computational effort where progress is fastest.</li>
+<li><strong>When Pooling Hurts (Exercise B):</strong> As proven in Exercise B, if one parent produces slightly better immediate children ($E=1$) while another produces slightly worse children ($E=2$) that lead directly to a global optimum ($E=0$), pooling ruthlessly eliminates the second lineage, trapping the entire search population in a dead end.</li>
+</ul>
+<h3>Q3. Why Independent Success Formula Does Not Prove Beam Scaling</h3>
+<p>The independent formula $\Pr = 1 - [1 - p(b)]^k$ fails to establish that beam width always improves success for two reasons:
+1. <strong>Selection Correlation:</strong> Beam members are not independent. In Methods C and D, selection pools candidates across parents, inducing strong positive correlation (common ancestry).
+2. <strong>Fixed Budget Constraints:</strong> Under a fixed total budget $B$, increasing $k$ decreases the evaluation allowance per state ($B/k$). If $p(B/k)$ drops faster than $(1 - p)^k$ compensates, wider beams underperform narrower beams (as demonstrated by $k=16$ in Figure 1).</p>
+<h3>Q4. Duplicates, Near-Duplicates, and Common Ancestry</h3>
+<ul>
+<li><strong>Exact Duplicates:</strong> Structurally identical configurations ($q_i = q_j$). Handled in $O(N)$ via hash sets.</li>
+<li><strong>Near-Duplicates:</strong> States differing by only 1 or 2 queen positions ($d_H(q_i, q_j) \le 2$). They belong to the identical local basin of attraction.</li>
+<li><strong>Common Ancestry:</strong> States that originated from the same initial random seed board.</li>
+<li><strong>Why Deduplication is Insufficient:</strong> Exact deduplication only removes identical boards. If parent $P$ produces 10 children that each move a different queen to row 0, all 10 boards are structurally unique, yet they are near-duplicates sharing 100% common ancestry. Deduplication retains all 10, allowing that single lineage to monopolize the beam and causing complete diversity collapse.</li>
+</ul>
+<h3>Q5. Roles of Temperature $\tau$ and Diversity Gate $d_{\min}$</h3>
+<ul>
+<li><strong>Temperature $\tau$:</strong> Regulates selection greediness in Boltzmann sampling. As $\tau \to 0$, selection becomes purely greedy (Method C). As $\tau \to \infty$, selection approaches uniform random sampling. Excessively high $\tau$ degrades search by repeatedly selecting poor, high-conflict boards.</li>
+<li><strong>Diversity Gate $d_{\min}$:</strong> Mandates that newly admitted states differ by at least $d_{\min} \times N$ columns from all accepted states.</li>
+<li><strong>Performance Reduction:</strong> If $d_{\min}$ is set too strictly (as in Method E with $d_{\min}=0.10$), the filter rejects promising offspring that are refining a solution in the basin of attraction of a low-energy state. Forcing the algorithm to accept distant states wastes evaluations on unpromising regions, driving success to 0%.</li>
+</ul>
+<h3>Q6. Global Optimality, Local Minima, and Unsatisfiability</h3>
+<ul>
+<li><strong>$E = 0$ Proof:</strong> Yes. By definition, energy $E(q)$ counts attacking pairs ($\ge 0$). Attaining $E = 0$ achieves the theoretical lower bound, rigorously proving global optimality.</li>
+<li><strong>$E &gt; 0$ Interpretation:</strong> No. Returning $E &gt; 0$ upon budget exhaustion proves neither that the state is a local minimum nor that the problem is unsatisfiable:</li>
+<li>The final state may simply be on a neutral plateau or mid-descent when the budget counter hit $B$.</li>
+<li>For all $N \ge 4$, $N$-Queens is mathematically proven to be satisfiable. Budget exhaustion merely reflects search incompleteness.</li>
+</ul>
+<h3>Q7. Complexity Accounting of the Move-Delta Formulation</h3>
+<ul>
+<li><strong>Scoring:</strong> Computing $\Delta$ requires 6 array lookups ($R, D^+, D^-$) and basic arithmetic: <strong>strictly $O(1)$ time and $O(1)$ auxiliary space</strong>.</li>
+<li><strong>Child Copying:</strong> Only materialized when selected: copying $q$ and count arrays takes <strong>$O(N)$ time</strong>.</li>
+<li><strong>Selection:</strong> </li>
+<li>Method C: Sorting or partial sorting of $km$ candidates takes $O(km \log k)$ time.</li>
+<li>Method D: Drawing $k$ states via Boltzmann sampling takes $O(k \cdot |U|)$ time.</li>
+<li>Method E: Pairwise Hamming distance comparisons take $O(k^2 N)$ time.</li>
+<li><strong>Population Storage:</strong> Storing $k$ states and their count arrays requires $O(k N)$ memory, which is negligible for $N \le 100, k \le 16$.</li>
+</ul>
+<h3>Q8. Reliability vs. Speed (9/10 in 0.1s vs. 10/10 in 0.2s)</h3>
+<p>Neither solver is unconditionally superior; the preferred choice depends on the system objective:
+* <strong>Expected Time to First Solution:</strong>
+  * Solver 1 has expected time: $E[T] = \frac{0.1}{\Pr(\text{success})} = \frac{0.1}{0.90} \approx 0.111\text{ seconds}$ (assuming independent restarts).
+  * Solver 2 has expected time: $E[T] = \frac{0.2}{1.00} = 0.200\text{ seconds}$.
+  * If restarts are cheap, Solver 1 is almost <strong>$2\times$ faster</strong> in expected throughput!
+* <strong>Hard Real-Time Deadlines:</strong> If the solver is deployed in a mission-critical system where failure is catastrophic and timeouts cannot be retried, Solver 2 ($100\%$ reliability) is required.
+* <strong>Required Evidence:</strong> Full distribution of runtimes across failures, restart overhead costs, and the utility function of the application.</p>
+<h3>Q9. Evidence for Genuine Cooperation vs. "More Work"</h3>
+<ul>
+<li><strong>The Fallacy of "More Total Work":</strong> Running $k$ searches with budget $b$ each performs $kb$ total evaluations. Observing higher success than a single search with budget $b$ merely proves that more computational fuel was spent.</li>
+<li><strong>True Evidence for Cooperation:</strong></li>
+<li><strong>Strictly Fixed Total Budget:</strong> All algorithms must operate under the exact same total budget $B$.</li>
+<li><strong>Paired Win/Loss Superiority:</strong> Method C ($k=4$) must statistically outperform both Method A ($k=1$) and Method B ($k=4$, independent multi-start) on the exact same matched initial board seeds under the same budget $B$.</li>
+<li><strong>Empirical Confirmation:</strong> In our benchmark on $N = 32, B = 20,000$, Method C ($k=4$) achieved <strong>34.7% success</strong> compared to $8.0\%$ for Method A and $9.3\%$ for Method B, with a paired record of <strong>27 Wins to 5 Losses</strong> against Method A ($p &lt; 10^{-4}$). This establishes that information sharing (pooling) creates genuine algorithmic synergy beyond independent parallel search.</li>
+</ul>
+<hr />
+<h2>6. Conclusion</h2>
+<p>This empirical study demonstrates that <strong>local beam search provides a decisive advantage over single-state and multi-start search on complex combinatorial landscapes</strong>, but only when beam width is carefully balanced ($k=4$). 
+1. When beam width is too large ($k=16$), search depth is starved under fixed budgets.
+2. When diversity is artificially forced via strict distance gates (Method E), search performance collapses by preventing local exploitation.
+3. Natural diversity collapse in Greedy Beam Search (Method C) is not necessarily a bug: it represents the algorithm concentrating search bandwidth within the most promising basin of attraction to achieve global solutions.</p>
+</body>
+</html>
