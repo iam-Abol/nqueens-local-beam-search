@@ -1,6 +1,7 @@
 # Local Beam Search, Diversity, and Information Sharing in N-Queens
 **An Empirical and Theoretical Investigation**
 
+**Student ID:** 403405047  
 **GitHub Repository:** [https://github.com/iam-Abol/nqueens-local-beam-search](https://github.com/iam-Abol/nqueens-local-beam-search)
 
 ---
